@@ -20,7 +20,7 @@ from twisted.internet import defer
 from .push_rule_evaluator import PushRuleEvaluatorForEvent
 
 from synapse.api.constants import EventTypes
-from synapse.visibility import filter_events_for_clients_context
+from synapse.visibility import filter_events_for_joined_clients_context
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ def evaluator_for_event(event, hs, store, context):
 
     # if this event is an invite event, we may need to run rules for the user
     # who's been invited, otherwise they won't get told they've been invited
+    invited_user = None
     if event.type == 'm.room.member' and event.content['membership'] == 'invite':
         invited_user = event.state_key
         if invited_user and hs.is_mine_id(invited_user):
@@ -45,7 +46,7 @@ def evaluator_for_event(event, hs, store, context):
                 )
 
     defer.returnValue(BulkPushRuleEvaluator(
-        event.room_id, rules_by_user, store
+        event.room_id, rules_by_user, store, invited_user=invited_user,
     ))
 
 
@@ -58,25 +59,27 @@ class BulkPushRuleEvaluator:
     the same logic to run the actual rules, but could be optimised further
     (see https://matrix.org/jira/browse/SYN-562)
     """
-    def __init__(self, room_id, rules_by_user, store):
+    def __init__(self, room_id, rules_by_user, store, invited_user):
         self.room_id = room_id
         self.rules_by_user = rules_by_user
         self.store = store
+        self.invited_user = invited_user  # The event is an invite for this user
 
     @defer.inlineCallbacks
     def action_for_event_by_user(self, event, context):
         actions_by_user = {}
 
-        # None of these users can be peeking since this list of users comes
-        # from the set of users in the room, so we know for sure they're all
-        # actually in the room.
-        user_tuples = [
-            (u, False) for u in self.rules_by_user.keys()
-        ]
-
-        filtered_by_user = yield filter_events_for_clients_context(
-            self.store, user_tuples, [event], {event.event_id: context}
+        visibile_to_users = yield filter_events_for_joined_clients_context(
+            self.store, event, context,
+            joined_user_ids=(
+                u for u in self.rules_by_user.iterkeys() if u != self.invited_user
+            ),
         )
+
+        if self.invited_user:
+            # if this is an invite for a particular user, she can always see her
+            # own invite event
+            visibile_to_users.add(self.invited_user)
 
         room_members = yield self.store.get_joined_users_from_context(
             event, context
@@ -87,19 +90,18 @@ class BulkPushRuleEvaluator:
         condition_cache = {}
 
         for uid, rules in self.rules_by_user.items():
+            if uid not in visibile_to_users:
+                continue
+
+            if event.sender == uid:
+                continue
+
             display_name = room_members.get(uid, {}).get("display_name", None)
             if not display_name:
                 # Handle the case where we are pushing a membership event to
                 # that user, as they might not be already joined.
                 if event.type == EventTypes.Member and event.state_key == uid:
                     display_name = event.content.get("displayname", None)
-
-            filtered = filtered_by_user[uid]
-            if len(filtered) == 0:
-                continue
-
-            if filtered[0].sender == uid:
-                continue
 
             for rule in rules:
                 if 'enabled' in rule and not rule['enabled']:
