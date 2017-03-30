@@ -20,7 +20,6 @@ from twisted.internet import defer
 from .push_rule_evaluator import PushRuleEvaluatorForEvent
 
 from synapse.api.constants import EventTypes
-from synapse.visibility import filter_events_for_joined_clients_context
 
 
 logger = logging.getLogger(__name__)
@@ -69,18 +68,6 @@ class BulkPushRuleEvaluator:
     def action_for_event_by_user(self, event, context):
         actions_by_user = {}
 
-        visibile_to_users = yield filter_events_for_joined_clients_context(
-            self.store, event, context,
-            joined_user_ids=(
-                u for u in self.rules_by_user.iterkeys() if u != self.invited_user
-            ),
-        )
-
-        if self.invited_user:
-            # if this is an invite for a particular user, she can always see her
-            # own invite event
-            visibile_to_users.add(self.invited_user)
-
         room_members = yield self.store.get_joined_users_from_context(
             event, context
         )
@@ -90,9 +77,6 @@ class BulkPushRuleEvaluator:
         condition_cache = {}
 
         for uid, rules in self.rules_by_user.items():
-            if uid not in visibile_to_users:
-                continue
-
             if event.sender == uid:
                 continue
 
