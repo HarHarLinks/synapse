@@ -188,50 +188,6 @@ def filter_events_for_clients(store, user_tuples, events, event_id_to_state):
 
 
 @defer.inlineCallbacks
-def filter_events_for_joined_clients_context(store, event, context, joined_user_ids):
-    """Figure out who this event is visible to in a list of joined users.
-
-    This bypasses the more generic filtering above as the logic is a lot simpler
-    for joined users, we only need to check if they've forgotten the room or
-    have ignored the sender.
-
-    Args:
-        event (EventBase)
-        context (EventContext)
-        joined_user_ids (iterable of str): the user_ids whome we want to query the
-            visibility of the event for, they must all be joined in the room
-            at the event.
-
-    Returns:
-        set of user_ids who can see the event
-    """
-    visibile_to_users = set(joined_user_ids)
-
-    forgotten = yield store.who_forgot_in_room(event.room_id)
-
-    for row in forgotten:
-        user_id = row["user_id"]
-        event_id = row["event_id"]
-
-        mem_id = context.current_state_ids.get((EventTypes.Member, user_id), None)
-        if event_id == mem_id:
-            visibile_to_users.discard(user_id)
-
-    if not event.is_state():
-        ignore_dict_content = yield store.get_global_account_data_by_type_for_users(
-            "m.ignored_user_list", user_ids=visibile_to_users,
-        )
-
-        sender = event.sender
-        for user_id, content in ignore_dict_content.iteritems():
-            if content:
-                if sender in content.get("ignored_users", {}):
-                    visibile_to_users.discard(user_id)
-
-    defer.returnValue(visibile_to_users)
-
-
-@defer.inlineCallbacks
 def filter_events_for_client(store, user_id, events, is_peeking=False):
     """
     Check which events a user is allowed to see
