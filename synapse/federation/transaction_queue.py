@@ -224,17 +224,19 @@ class TransactionQueue(object):
                 self._attempt_new_transaction, destination
             )
 
-    def send_presence(self, destination, states):
-        if not self.can_send_to(destination):
-            return
+    def send_presence(self, hosts_and_states):
+        for destinations, states in hosts_and_states:
+            for destination in destinations:
+                if not self.can_send_to(destination):
+                    continue
 
-        self.pending_presence_by_dest.setdefault(destination, {}).update({
-            state.user_id: state for state in states
-        })
+                self.pending_presence_by_dest.setdefault(destination, {}).update({
+                    state.user_id: state for state in states
+                })
 
-        preserve_context_over_fn(
-            self._attempt_new_transaction, destination
-        )
+                preserve_context_over_fn(
+                    self._attempt_new_transaction, destination
+                )
 
     def send_edu(self, destination, edu_type, content, key=None):
         edu = Edu(

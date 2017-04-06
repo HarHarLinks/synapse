@@ -280,7 +280,7 @@ class FederationSenderHandler(object):
             # The federation stream containis a bunch of different types of
             # rows that need to be handled differently. We parse the rows, put
             # them into the appropriate collection and then send them off.
-            presence_to_send = {}
+            presence_to_send = []
             keyed_edus = {}
             edus = {}
             failures = {}
@@ -289,13 +289,12 @@ class FederationSenderHandler(object):
             # Parse the rows in the stream
             for row in rows:
                 typ = row.type
+                destinations = row.destinations
                 content = row.data
 
                 if typ == send_queue.PRESENCE_TYPE:
-                    destination = content["destination"]
-                    state = UserPresenceState.from_dict(content["state"])
-
-                    presence_to_send.setdefault(destination, []).append(state)
+                    state = UserPresenceState.from_dict(content)
+                    presence_to_send.append((destinations, [state]))
                 elif typ == send_queue.KEYED_EDU_TYPE:
                     key = content["key"]
                     edu = Edu(**content["edu"])
@@ -308,18 +307,17 @@ class FederationSenderHandler(object):
 
                     edus.setdefault(edu.destination, []).append(edu)
                 elif typ == send_queue.FAILURE_TYPE:
-                    destination = content["destination"]
-                    failure = content["failure"]
+                    failure = content
 
-                    failures.setdefault(destination, []).append(failure)
+                    for destination in destinations:
+                        failures.setdefault(destination, []).append(failure)
                 elif typ == send_queue.DEVICE_MESSAGE_TYPE:
-                    device_destinations.add(content["destination"])
+                    device_destinations.update(destinations)
                 else:
                     raise Exception("Unrecognised federation type: %r", typ)
 
             # We've finished collecting, send everything off
-            for destination, states in presence_to_send.items():
-                self.federation_sender.send_presence(destination, states)
+            self.federation_sender.send_presence(presence_to_send)
 
             for destination, edu_map in keyed_edus.items():
                 for key, edu in edu_map.items():

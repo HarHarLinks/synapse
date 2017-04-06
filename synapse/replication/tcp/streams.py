@@ -59,7 +59,8 @@ PublicRoomsStreamRow = namedtuple("PublicRoomsStreamRow",
                                    "network_id",))
 DeviceListsStreamRow = namedtuple("DeviceListsStreamRow", ("user_id", "destination",))
 ToDeviceStreamRow = namedtuple("ToDeviceStreamRow", ("entity",))
-FederationStreamRow = namedtuple("FederationStreamRow", ("type", "data",))
+FederationStreamRow = namedtuple("FederationStreamRow",
+                                 ("type", "destinations", "data",))
 TagAccountDataStreamRow = namedtuple("TagAccountDataStreamRow",
                                      ("user_id", "room_id", "data"))
 AccountDataStreamRow = namedtuple("AccountDataStream",

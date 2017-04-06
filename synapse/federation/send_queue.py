@@ -188,17 +188,20 @@ class FederationRemoteSendQueue(object):
 
         self.notifier.on_new_replication_data()
 
-    def send_presence(self, destination, states):
+    def send_presence(self, hosts_and_states):
         """As per TransactionQueue"""
         pos = self._next_pos()
 
         self.presence_map.update({
             state.user_id: state
+            for destinations, states in hosts_and_states
             for state in states
         })
 
         self.presence_changed[pos] = [
-            (destination, state.user_id) for state in states
+            (destinations, state.user_id)
+            for destinations, states in hosts_and_states
+            for state in states
         ]
 
         self.notifier.on_new_replication_data()
@@ -250,27 +253,26 @@ class FederationRemoteSendQueue(object):
         keys = self.presence_changed.keys()
         i = keys.bisect_right(from_token)
         j = keys.bisect_right(to_token) + 1
-        dest_user_ids = set(
-            (pos, dest_user_id)
+        dest_user_ids = [
+            (pos, dests_user_id)
             for pos in keys[i:j]
-            for dest_user_id in self.presence_changed[pos]
-        )
+            for dests_user_id in self.presence_changed[pos]
+        ]
 
-        for (key, (dest, user_id)) in dest_user_ids:
-            rows.append((key, PRESENCE_TYPE, {
-                "destination": dest,
-                "state": self.presence_map[user_id].as_dict(),
-            }))
+        for (key, (dests, user_id)) in dest_user_ids:
+            rows.append(
+                (key, PRESENCE_TYPE, dests, self.presence_map[user_id].as_dict())
+            )
 
         # Fetch changes keyed edus
         keys = self.keyed_edu_changed.keys()
         i = keys.bisect_right(from_token)
         j = keys.bisect_right(to_token) + 1
-        keyed_edus = set((k, self.keyed_edu_changed[k]) for k in keys[i:j])
+        keyed_edus = {self.keyed_edu_changed[k]: k for k in keys[i:j]}
 
-        for (pos, (destination, edu_key)) in keyed_edus:
+        for ((destination, edu_key), pos) in keyed_edus.iteritems():
             rows.append(
-                (pos, KEYED_EDU_TYPE, {
+                (pos, KEYED_EDU_TYPE, [destination], {
                     "key": edu_key,
                     "edu": self.keyed_edu[(destination, edu_key)].get_internal_dict(),
                 })
@@ -280,33 +282,30 @@ class FederationRemoteSendQueue(object):
         keys = self.edus.keys()
         i = keys.bisect_right(from_token)
         j = keys.bisect_right(to_token) + 1
-        edus = set((k, self.edus[k]) for k in keys[i:j])
+        edus = [(k, self.edus[k]) for k in keys[i:j]]
 
         for (pos, edu) in edus:
-            rows.append((pos, EDU_TYPE, edu.get_internal_dict()))
+            rows.append((pos, EDU_TYPE, [], edu.get_internal_dict()))
 
         # Fetch changed failures
         keys = self.failures.keys()
         i = keys.bisect_right(from_token)
         j = keys.bisect_right(to_token) + 1
-        failures = set((k, self.failures[k]) for k in keys[i:j])
+        failures = [(k, self.failures[k]) for k in keys[i:j]]
 
         for (pos, (destination, failure)) in failures:
-            rows.append((pos, FAILURE_TYPE, {
-                "destination": destination,
-                "failure": failure,
-            }))
+            rows.append((pos, FAILURE_TYPE, [destination], failure))
 
         # Fetch changed device messages
         keys = self.device_messages.keys()
         i = keys.bisect_right(from_token)
         j = keys.bisect_right(to_token) + 1
-        device_messages = set((k, self.device_messages[k]) for k in keys[i:j])
+        device_messages = [(k, self.device_messages[k]) for k in keys[i:j]]
 
-        for (pos, destination) in device_messages:
-            rows.append((pos, DEVICE_MESSAGE_TYPE, {
-                "destination": destination,
-            }))
+        if device_messages:
+            pos = max(pos for pos, _ in device_messages)
+            destinations = list(set(destination for _, destination in device_messages))
+            rows.append((pos, DEVICE_MESSAGE_TYPE, destinations, None))
 
         # Sort rows based on pos
         rows.sort()
